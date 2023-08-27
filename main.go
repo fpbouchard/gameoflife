@@ -32,17 +32,17 @@ var (
 )
 
 type Game struct {
-	// the cells, a 2d array of logicalScreenWidth x logicalScreenHeight of bools
-	cells          []bool
-	pattern        []bool
-	patternWidth   int
-	patternHeight  int
-	lastUpdateTime time.Time
-	welcomeScreen  bool
 	active         bool
+	cells          []bool
 	editorVisible  bool
+	lastUpdateTime time.Time
+	pattern        []bool
+	patternHeight  int
+	patternWidth   int
+	showTPS        bool
 	speed          time.Duration
 	terminated     bool
+	welcomeScreen  bool
 }
 
 func (g *Game) index(x, y int) int {
@@ -54,7 +54,7 @@ func (g *Game) patternIndex(x, y int) int {
 }
 
 func (g *Game) ManageKeys() {
-	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+	if inpututil.IsKeyJustPressed(ebiten.KeyQ) {
 		g.terminated = true
 	}
 
@@ -95,6 +95,10 @@ func (g *Game) ManageKeys() {
 		g.initPattern(g.patternWidth+1, g.patternHeight, true)
 	} else if inpututil.IsKeyJustPressed(ebiten.KeyRight) {
 		g.initPattern(g.patternWidth-1, g.patternHeight, true)
+	}
+
+	if inpututil.IsKeyJustPressed(ebiten.KeyF) {
+		g.showTPS = !g.showTPS
 	}
 }
 
@@ -187,13 +191,14 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		// Draw the instructions at the center of the screen
 		ebitenutil.DebugPrintAt(screen, "Welcome to the Game of Life!\n\n"+
 			"Press <space> to start (and pause)\n"+
+			"Click (and drag) to add the pattern to the screen\n"+
 			"Press <backspace> to clear the screen\n"+
 			"Press <delete> to clear the pattern\n"+
 			"Press <tab> to show/hide the pattern editor\n"+
 			"Press <up>/<down>/<left>/<right> to change the pattern size\n"+
 			"Press <+>/<-> to change the speed\n"+
-			"Click (and drag) to add the pattern to the screen\n"+
-			"Press <escape> to quit\n",
+			"Press <f> to toggle the TPS (ticks per second) display\n"+
+			"Press <q> to quit\n",
 			20, 20,
 		)
 
@@ -238,6 +243,12 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	if !g.active {
 		vector.DrawFilledRect(screen, logicalScreenWidth-60, logicalScreenHeight-80, 10, 40, color.White, false)
 		vector.DrawFilledRect(screen, logicalScreenWidth-40, logicalScreenHeight-80, 10, 40, color.White, false)
+	}
+
+	// Display TPS in the top left corner
+	if g.showTPS {
+		msg := fmt.Sprintf("TPS: %0.2f", ebiten.ActualTPS())
+		text.Draw(screen, msg, mplusNormalFont, 10, 10, color.White)
 	}
 }
 
@@ -306,13 +317,14 @@ func loadFont() {
 func main() {
 	loadFont()
 	g := &Game{
-		lastUpdateTime: time.Now(),
-		welcomeScreen:  true,
 		active:         false,
 		editorVisible:  true,
-		patternWidth:   3,
+		lastUpdateTime: time.Now(),
 		patternHeight:  3,
+		patternWidth:   3,
+		showTPS:        false,
 		speed:          25,
+		welcomeScreen:  true,
 	}
 	g.initCells()
 	g.initGlider()
