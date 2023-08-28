@@ -2,9 +2,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"image/color"
+	"io"
 	"log"
+	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -18,13 +23,12 @@ import (
 )
 
 const (
-	screenWidth         = 1280
-	screenHeight        = 960
 	logicalScreenFactor = 2
-	logicalScreenWidth  = screenWidth / logicalScreenFactor
 	logicalScreenHeight = screenHeight / logicalScreenFactor
-	cellSize            = 2
+	logicalScreenWidth  = screenWidth / logicalScreenFactor
 	patternEditorScale  = 20
+	screenHeight        = 960
+	screenWidth         = 1280
 )
 
 var (
@@ -32,17 +36,27 @@ var (
 )
 
 type Game struct {
-	active         bool
-	cells          []bool
-	editorVisible  bool
-	lastUpdateTime time.Time
-	pattern        []bool
-	patternHeight  int
-	patternWidth   int
-	showTPS        bool
-	speed          time.Duration
-	terminated     bool
-	welcomeScreen  bool
+	active             bool
+	cells              []bool
+	editorVisible      bool
+	lastUpdateTime     time.Time
+	pattern            []bool
+	patternEditorScale int
+	patternHeight      int
+	patternWidth       int
+	showTPS            bool
+	speed              time.Duration
+	terminated         bool
+	welcomeScreen      bool
+}
+
+type PatternDefinition struct {
+	Code        string
+	Name        string
+	Meta        string
+	Date        string
+	Description string
+	Pattern     string
 }
 
 func (g *Game) index(x, y int) int {
@@ -112,19 +126,19 @@ func (g *Game) Update() error {
 
 	if g.editorVisible && inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
 		x, y := ebiten.CursorPosition()
-		patternEditorX := logicalScreenWidth - (g.patternWidth * patternEditorScale)
-		patternEditorY := g.patternHeight * patternEditorScale
+		patternEditorX := logicalScreenWidth - (g.patternWidth * g.patternEditorScale)
+		patternEditorY := g.patternHeight * g.patternEditorScale
 		if x >= patternEditorX && y <= patternEditorY {
-			x = (x - patternEditorX) / patternEditorScale
-			y = y / patternEditorScale
+			x = (x - patternEditorX) / g.patternEditorScale
+			y = y / g.patternEditorScale
 			g.pattern[g.patternIndex(x, y)] = !g.pattern[g.patternIndex(x, y)]
 		}
 	}
 
 	if ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) {
 		x, y := ebiten.CursorPosition()
-		patternEditorX := logicalScreenWidth - (g.patternWidth * patternEditorScale)
-		patternEditorY := g.patternHeight * patternEditorScale
+		patternEditorX := logicalScreenWidth - (g.patternWidth * g.patternEditorScale)
+		patternEditorY := g.patternHeight * g.patternEditorScale
 		if !g.editorVisible || x < patternEditorX || y > patternEditorY {
 			x = x / logicalScreenFactor
 			y = y / logicalScreenFactor
@@ -211,23 +225,23 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			if g.cells[g.index(j, i)] {
 				x := float32(j * logicalScreenFactor)
 				y := float32(i * logicalScreenFactor)
-				vector.DrawFilledRect(screen, x, y, cellSize, cellSize, color.White, false)
+				vector.DrawFilledRect(screen, x, y, logicalScreenFactor, logicalScreenFactor, color.White, false)
 			}
 		}
 	}
 
 	// Draw pattern editor
 	if g.editorVisible {
-		patternEditorWidth := g.patternWidth * patternEditorScale
-		patternEditorHeight := g.patternHeight * patternEditorScale
-		vector.DrawFilledRect(screen, logicalScreenWidth-float32(g.patternWidth)*patternEditorScale, 0, float32(patternEditorWidth), float32(patternEditorHeight), color.Black, false)
+		patternEditorWidth := g.patternWidth * g.patternEditorScale
+		patternEditorHeight := g.patternHeight * g.patternEditorScale
+		vector.DrawFilledRect(screen, logicalScreenWidth-float32(g.patternWidth*g.patternEditorScale), 0, float32(patternEditorWidth), float32(patternEditorHeight), color.Black, false)
 		for i := 0; i < g.patternHeight; i++ {
 			for j := 0; j < g.patternWidth; j++ {
-				x := float32(logicalScreenWidth - ((g.patternWidth - j) * patternEditorScale))
-				y := float32(i * patternEditorScale)
-				vector.StrokeRect(screen, x, y, patternEditorScale, patternEditorScale, 1, color.RGBA{127, 127, 127, 255}, false)
+				x := float32(logicalScreenWidth - ((g.patternWidth - j) * g.patternEditorScale))
+				y := float32(i * g.patternEditorScale)
+				vector.StrokeRect(screen, x, y, float32(g.patternEditorScale), float32(g.patternEditorScale), 1, color.RGBA{127, 127, 127, 255}, false)
 				if g.pattern[g.patternIndex(j, i)] {
-					vector.DrawFilledRect(screen, x, y, patternEditorScale, patternEditorScale, color.White, false)
+					vector.DrawFilledRect(screen, x, y, float32(g.patternEditorScale), float32(g.patternEditorScale), color.White, false)
 				}
 			}
 			// Display the pattern size
@@ -278,6 +292,17 @@ func (g *Game) initPattern(newWidth int, newHeight int, keepPrevious bool) {
 			}
 		}
 	}
+
+	g.patternEditorScale = patternEditorScale
+	for {
+		patternEditorWidth := newWidth * g.patternEditorScale
+		patternEditorHeight := newHeight * g.patternEditorScale
+		if patternEditorWidth <= logicalScreenWidth && patternEditorHeight <= logicalScreenHeight {
+			break
+		}
+		g.patternEditorScale -= 5
+	}
+
 	g.patternWidth = newWidth
 	g.patternHeight = newHeight
 	g.pattern = newPattern
@@ -296,6 +321,41 @@ func (g *Game) initGlider() {
 	g.pattern[g.patternIndex(0, 2)] = true
 	g.pattern[g.patternIndex(1, 2)] = true
 	g.pattern[g.patternIndex(2, 2)] = true
+}
+
+func (g *Game) initPatternFromUrl(url string) {
+	client := http.Client{}
+	res, err := client.Get(fmt.Sprintf("https://playgameoflife.com/lexicon/data/%s.json", url))
+	if err != nil {
+		log.Fatal(err)
+	}
+	if res.Body != nil {
+		defer res.Body.Close()
+	}
+	body, readErr := io.ReadAll(res.Body)
+	if readErr != nil {
+		log.Fatal(readErr)
+	}
+	definition := PatternDefinition{}
+	jsonErr := json.Unmarshal(body, &definition)
+	if jsonErr != nil {
+		log.Fatal(jsonErr)
+	}
+
+	patternLines := strings.Split(definition.Pattern, "\n")
+	if (patternLines[len(patternLines)-1]) == "" {
+		patternLines = patternLines[:len(patternLines)-1]
+	}
+	g.patternWidth = len(patternLines[0])
+	g.patternHeight = len(patternLines)
+	g.initPattern(g.patternWidth, g.patternHeight, false)
+	for i, line := range patternLines {
+		for j, char := range line {
+			if char == 'O' {
+				g.pattern[g.patternIndex(j, i)] = true
+			}
+		}
+	}
 }
 
 func loadFont() {
@@ -327,9 +387,16 @@ func main() {
 		welcomeScreen:  true,
 	}
 	g.initCells()
-	g.initGlider()
+
+	// If a command-line argument is passed
+	if len(os.Args) > 1 {
+		g.initPatternFromUrl(os.Args[1])
+	} else {
+		g.initGlider()
+	}
 
 	ebiten.SetWindowSize(screenWidth, screenHeight)
+	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	ebiten.SetWindowTitle("Game of Life")
 	if err := ebiten.RunGame(g); err != nil {
 		log.Fatal(err)
